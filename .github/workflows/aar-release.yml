@@ -1,0 +1,92 @@
+name: AAR Library Release
+
+on:
+  push:
+    tags:
+      - 'v*' # 当推送以v开头的tag时触发
+    branches: [ "master" ]
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # 需要有写入权限来创建release
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build AAR library
+        run: ./gradlew assembleRelease
+
+      - name: Create release directory
+        run: mkdir -p release
+
+      - name: Copy AAR files to release directory
+        run: |
+          cp build/outputs/aar/updater-release.aar release/
+
+      - name: Get release version from tag
+        id: get_version
+        run: |
+          if [[ ${{ github.ref }} == refs/tags/* ]]; then
+            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          else
+            # 从gradle properties获取版本
+            VERSION=$(./gradlew properties -q | grep "version:" | awk '{print $2}')
+            echo "VERSION=$VERSION-$(date +%Y%m%d%H%M%S)" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.get_version.outputs.VERSION }}
+          release_name: "Updater Library ${{ steps.get_version.outputs.VERSION }}"
+          body: |
+            # OplusUpdater AAR Library
+            
+            Android library for querying OPlus/OPPO/realme official OTA updates.
+            
+            ## Files
+            - `updater-release.aar`: Release version of the library
+            
+            ## Usage
+            Add to your app's `build.gradle.kts`:
+            ```kotlin
+            dependencies {
+                implementation files("libs/updater-release.aar")
+            }
+            ```
+            
+            See [README.md](README.md) for detailed usage instructions.
+          files: release/*.aar
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload AAR artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: aar-files
+          path: release/*.aar
+          retention-days: 7
+
+      - name: Show release info
+        run: |
+          echo "Release created: ${{ steps.get_version.outputs.VERSION }}"
+          echo "AAR files:"
+          ls -la release/
