@@ -1,7 +1,5 @@
 package updater
 
-import android.util.Base64
-import android.util.Log
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -22,6 +20,7 @@ import java.security.SecureRandom
 import java.security.interfaces.RSAPublicKey
 import java.security.spec.RSAPublicKeySpec
 import java.security.spec.X509EncodedKeySpec
+import java.util.*
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -55,7 +54,7 @@ object Updater {
             .replace("\n", "")
             .replace("\r", "")
             .trim()
-        val der = Base64.decode(stripped, Base64.DEFAULT)
+        val der = Base64.getDecoder().decode(stripped)
 
         // First try X.509 SubjectPublicKeyInfo
         runCatching {
@@ -107,7 +106,7 @@ object Updater {
         val cipher = Cipher.getInstance("RSA/ECB/OAEPWithSHA-1AndMGF1Padding")
         cipher.init(Cipher.ENCRYPT_MODE, publicKey)
         val out = cipher.doFinal(data)
-        return Base64.encodeToString(out, Base64.NO_WRAP)
+        return Base64.getEncoder().encodeToString(out)
     }
 
     private fun randomBytes(len: Int): ByteArray {
@@ -120,12 +119,12 @@ object Updater {
         val cipher = Cipher.getInstance("AES/CTR/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
         val out = cipher.doFinal(plain)
-        return Base64.encodeToString(out, Base64.NO_WRAP)
+        return Base64.getEncoder().encodeToString(out)
     }
 
     private fun aesCtrDecrypt(cipherB64: String, key: ByteArray, ivB64: String): ByteArray {
-        val cipherBytes = Base64.decode(cipherB64, Base64.DEFAULT)
-        val iv = Base64.decode(ivB64, Base64.DEFAULT)
+        val cipherBytes = Base64.getDecoder().decode(cipherB64)
+        val iv = Base64.getDecoder().decode(ivB64)
         val cipher = Cipher.getInstance("AES/CTR/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
         return cipher.doFinal(cipherBytes)
@@ -134,7 +133,7 @@ object Updater {
     fun queryUpdate(args0: QueryUpdateArgs): ResponseResult {
         val result = ResponseResult()
         val tStart = System.currentTimeMillis()
-        Log.d("Updater", "queryUpdate() start, args=$args0")
+        println("[DEBUG] queryUpdate() start, args=$args0")
 
         return try {
             val args = args0.copy()
@@ -144,16 +143,16 @@ object Updater {
 
             val cfg = getConfig(args.region, args.gray)
             if (args.nvCarrier.isBlank()) args.nvCarrier = cfg.carrierID
-            Log.d("Updater", "cfg.host=${cfg.host}, carrier=${args.nvCarrier}, pubKeyVer=${cfg.publicKeyVersion}")
+            println("[DEBUG] cfg.host=${cfg.host}, carrier=${args.nvCarrier}, pubKeyVer=${cfg.publicKeyVersion}")
 
             val iv = randomBytes(16)
             val key = randomBytes(32)
 
             val protectedKey = rsaOaepEncryptBase64(
                 cfg.publicKey,
-                Base64.encode(key, Base64.NO_WRAP)
+                Base64.getEncoder().encode(key)
             )
-            Log.d("Updater", "protectedKey len=${protectedKey.length}")
+            println("[DEBUG] protectedKey len=${protectedKey.length}")
 
             val deviceId = defaultDeviceId()
             val guid = if (args.guid.isNotBlank()) args.guid.lowercase() else defaultDeviceId()
@@ -182,7 +181,7 @@ object Updater {
                 })
             }.toString()
             headers["protectedKey"] = pkJson
-            Log.d("Updater", "headers keys=${headers.keys}")
+            println("[DEBUG] headers keys=${headers.keys}")
 
             val bodyPlain = buildJsonObject {
                 put("mode", "0")
@@ -196,7 +195,7 @@ object Updater {
             val cipherB64 = aesCtrEncryptToBase64(bodyPlain, key, iv)
             val reqBody = buildJsonObject {
                 put("cipher", cipherB64)
-                put("iv", Base64.encodeToString(iv, Base64.NO_WRAP))
+                put("iv", Base64.getEncoder().encodeToString(iv))
             }.toString()
 
             val clientBuilder = OkHttpClient.Builder()
@@ -208,15 +207,15 @@ object Updater {
                         InetSocketAddress(u.host, if (u.port > 0) u.port else 80)
                     )
                     clientBuilder.proxy(proxy)
-                    Log.d("Updater", "use proxy=${u.host}:${if (u.port > 0) u.port else 80}")
+                    println("[DEBUG] use proxy=${u.host}:${if (u.port > 0) u.port else 80}")
                 }.onFailure { e ->
-                    Log.w("Updater", "proxy parse failed: ${e.message}")
+                    println("[WARN] proxy parse failed: ${e.message}")
                 }
             }
             val client = clientBuilder.build()
 
             val url = URL("https", cfg.host, "/update/v5").toString()
-            Log.d("Updater", "request url=$url")
+            println("[DEBUG] request url=$url")
 
             val request = Request.Builder()
                 .url(url)
@@ -229,11 +228,11 @@ object Updater {
             val tReq = System.currentTimeMillis()
             val response = client.newCall(request).execute()
             val body = response.body?.string().orEmpty()
-            Log.d("Updater", "http code=${response.code}, cost=${System.currentTimeMillis() - tReq}ms, bodyLen=${body.length}")
+            println("[DEBUG] http code=${response.code}, cost=${System.currentTimeMillis() - tReq}ms, bodyLen=${body.length}")
 
             val json = runCatching { Json.parseToJsonElement(body).jsonObject }
                 .getOrElse { e ->
-                    Log.e("Updater", "resp json parse error", e)
+                    println("[ERROR] resp json parse error: ${e.message}")
                     result.responseCode = -1
                     result.errMsg = "resp json parse error: ${e.message}"
                     return result
@@ -253,7 +252,7 @@ object Updater {
             if (!respBodyRaw.isNullOrBlank()) {
                 val bodyObj = runCatching { Json.parseToJsonElement(respBodyRaw).jsonObject }
                     .getOrElse { e ->
-                        Log.e("Updater", "inner body parse error", e)
+                        println("[ERROR] inner body parse error: ${e.message}")
                         null
                     }
                 if (bodyObj != null) {
@@ -262,22 +261,27 @@ object Updater {
                     if (ivB64.isNotBlank() && cipher.isNotBlank()) {
                         runCatching {
                             result.decryptedBodyBytes = aesCtrDecrypt(cipher, key, ivB64)
-                            Log.d("Updater", "decrypt ok, bytes=${result.decryptedBodyBytes?.size}")
+                            println("[DEBUG] decrypt ok, bytes=${result.decryptedBodyBytes.size}")
                         }.onFailure { e ->
-                            Log.e("Updater", "decrypt failed", e)
+                            println("[ERROR] decrypt failed: ${e.message}")
                         }
                     }
                 }
             }
 
-            Log.d("Updater", "queryUpdate() done, total=${System.currentTimeMillis() - tStart}ms")
+            println("[DEBUG] queryUpdate() done, total=${System.currentTimeMillis() - tStart}ms")
+            
+            // 如果响应码不为0，确保错误信息被设置
+            if (result.responseCode != 0L && result.errMsg.isBlank()) {
+                result.errMsg = "Unknown error occurred"
+            }
+            
             result
         } catch (e: Exception) {
-            Log.e("Updater", "queryUpdate() failed", e)
+            println("[ERROR] queryUpdate() failed: ${e.message}")
             result.responseCode = -1
             result.errMsg = e.message ?: e.toString()
             result
         }
     }
-
 }

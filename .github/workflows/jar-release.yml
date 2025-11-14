@@ -1,10 +1,10 @@
-name: AAR Library Release
+name: JAR Library Release
 
 on:
   push:
     tags:
       - 'v*' # 当推送以v开头的tag时触发
-    branches: [ "master" ]
+    branches: [ "main" ]
 
 jobs:
   build-and-release:
@@ -29,16 +29,19 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Build AAR library
-        run: ./gradlew :updater:assembleRelease
+      - name: Build Full JAR library
+        run: ./gradlew fatJar
 
+      - name: Build Lite JAR library
+        run: ./gradlew Jar
+        
       - name: Create release directory
         run: mkdir -p release
 
-      - name: Copy AAR files to release directory
+      - name: Copy JAR files to release directory
         run: |
-          cp build/outputs/aar/updater-release.aar release/
-          cp build/outputs/aar/updater-debug.aar release/
+          cp build/libs/updater-all.jar release/
+          cp build/libs/updater.jar release/
 
       - name: Get release version from tag
         id: get_version
@@ -55,40 +58,44 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.get_version.outputs.VERSION }}
-          release_name: "Updater Library ${{ steps.get_version.outputs.VERSION }}"
+          release_name: "Updater CLI ${{ steps.get_version.outputs.VERSION }}"
           body: |
-            # OplusUpdater AAR Library
+            # OplusUpdater CLI Tool
             
-            Android library for querying OPlus/OPPO/realme official OTA updates.
+            Command-line tool for querying OPlus/OPPO/realme official OTA updates.
             
             ## Files
-            - `updater-release.aar`: Release version of the library
-            - `updater-debug.aar`: Debug version with additional debugging information
+            - `updater-all.jar`: Standalone executable JAR with all dependencies
+            - `updater.jar`: Library JAR without dependencies
             
             ## Usage
-            Add to your app's `build.gradle.kts`:
-            ```kotlin
-            dependencies {
-                implementation files("libs/updater-release.aar")
-            }
+            ```bash
+            # Run the CLI tool
+            java -jar updater-all.jar --help
+            
+            # Query for updates
+            java -jar updater-all.jar PLK110_11.A --model=PLK110 --region=CN
             ```
             
+            ## Requirements
+            - Java 8 or higher
+            
             See [README.md](README.md) for detailed usage instructions.
-          files: release/*.aar
+          files: release/*.jar
           draft: false
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload AAR artifacts
+      - name: Upload JAR artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: aar-files
-          path: release/*.aar
+          name: jar-files
+          path: release/*.jar
           retention-days: 7
 
       - name: Show release info
         run: |
           echo "Release created: ${{ steps.get_version.outputs.VERSION }}"
-          echo "AAR files:"
+          echo "JAR files:"
           ls -la release/
